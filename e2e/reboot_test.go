@@ -15,43 +15,44 @@ import (
 // Reboot all nodes in cluster all at once. Wait for nodes to return. Run nginx
 // workload.
 func TestReboot(t *testing.T) {
-	nodeList, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	for i := 0; i < 3; i++ {
+		nodeList, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	t.Logf("rebooting %v nodes", len(nodeList.Items))
+		t.Logf("rebooting %v nodes", len(nodeList.Items))
 
-	for _, node := range nodeList.Items {
-		var host string
-		for _, addr := range node.Status.Addresses {
-			if addr.Type == v1.NodeExternalIP {
-				host = addr.Address
-				break
+		for _, node := range nodeList.Items {
+			var host string
+			for _, addr := range node.Status.Addresses {
+				if addr.Type == v1.NodeExternalIP {
+					host = addr.Address
+					break
+				}
+			}
+			if host == "" {
+				t.Skip("could not get external node IP, kubelet must use cloud-provider flags")
+			}
+
+			// reboot
+			_, _, err := sshClient.SSH(host, "sudo reboot")
+			if _, ok := err.(*ssh.ExitMissingError); ok {
+				err = nil
+			}
+
+			if err != nil {
+				t.Fatalf("rebooting node: %v", err)
 			}
 		}
-		if host == "" {
-			t.Skip("could not get external node IP, kubelet must use cloud-provider flags")
-		}
 
-		// reboot
-		_, _, err := sshClient.SSH(host, "sudo reboot")
-		if _, ok := err.(*ssh.ExitMissingError); ok {
-			err = nil
-		}
+		// make sure nodes have chance to go down
+		time.Sleep(1 * time.Minute)
 
-		if err != nil {
-			t.Fatalf("rebooting node: %v", err)
+		if err := nodesReady(client, nodeList, t); err != nil {
+			t.Fatalf("some or all nodes did not recover from reboot: %v", err)
 		}
 	}
-
-	// make sure nodes have chance to go down
-	time.Sleep(1 * time.Minute)
-
-	if err := nodesReady(client, nodeList, t); err != nil {
-		t.Fatalf("some or all nodes did not recover from reboot: %v", err)
-	}
-
 }
 
 // nodesReady blocks until all nodes in list are ready based on Name. Safe
